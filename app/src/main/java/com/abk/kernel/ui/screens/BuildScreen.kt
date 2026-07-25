@@ -1185,31 +1185,6 @@ fun BuildScreen(
                 }
             )
 
-            if (!isOnePlusBuild) {
-                SectionCard(section = BuildSection.Runner) {
-                    val githubHostedRunnerLabel = stringResource(R.string.build_runner_github_hosted)
-                    val selfHostedRunnerLabel = stringResource(R.string.build_runner_self_hosted)
-                    val selectedRunner = if (config.runner == "self-hosted") "self-hosted" else "github-hosted"
-                    DropdownField(
-                        label = stringResource(R.string.build_runner),
-                        value = selectedRunner,
-                        options = listOf("github-hosted", "self-hosted"),
-                        optionLabel = {
-                            when (it) {
-                                "self-hosted" -> selfHostedRunnerLabel
-                                else -> githubHostedRunnerLabel
-                            }
-                        },
-                        onSelect = { vm.updateBuildConfig(config.copy(runner = it)) }
-                    )
-                    Text(
-                        text = stringResource(R.string.build_runner_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
             AnimatedVisibility(
                 visible = state.buildStatus != BuildStatus.IDLE,
                 enter = fadeIn() + slideInVertically { -it / 3 } + expandVertically(),
@@ -3659,7 +3634,6 @@ private fun BuildCustomModuleGroup.subtitle(noStageLabel: String, sourcePrefix: 
 private enum class BuildSection {
     KernelVersion,
     KernelSu,
-    Runner,
     Features,
     CustomKernelOptions,
     ZramOptions,
@@ -3681,7 +3655,6 @@ private fun SectionCard(
         title = when (section) {
             BuildSection.KernelVersion -> stringResource(R.string.build_kernel_version_config)
             BuildSection.KernelSu -> stringResource(R.string.build_kernelsu_config)
-            BuildSection.Runner -> stringResource(R.string.build_runner_config)
             BuildSection.Features -> stringResource(R.string.build_features)
             BuildSection.CustomKernelOptions -> stringResource(R.string.build_kernel_options_title)
             BuildSection.ZramOptions -> stringResource(R.string.build_zram_options)
@@ -3692,7 +3665,6 @@ private fun SectionCard(
         subtitle = subtitle ?: when (section) {
             BuildSection.KernelVersion -> stringResource(R.string.build_section_kernel_desc)
             BuildSection.KernelSu -> stringResource(R.string.build_section_ksu_desc)
-            BuildSection.Runner -> stringResource(R.string.build_section_runner_desc)
             BuildSection.Features -> stringResource(R.string.build_section_features_desc)
             BuildSection.CustomKernelOptions -> stringResource(R.string.build_section_kernel_options_desc)
             BuildSection.ZramOptions -> stringResource(R.string.build_section_zram_desc)
@@ -3703,7 +3675,6 @@ private fun SectionCard(
         icon = when (section) {
             BuildSection.KernelVersion -> Icons.Default.Memory
             BuildSection.KernelSu -> Icons.Default.Shield
-            BuildSection.Runner -> Icons.Default.Speed
             BuildSection.Features -> Icons.Default.Tune
             BuildSection.CustomKernelOptions -> Icons.Default.SettingsSuggest
             BuildSection.ZramOptions -> Icons.Default.Compress

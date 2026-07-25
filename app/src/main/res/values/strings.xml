@@ -171,12 +171,6 @@
     <string name="build_revision_510">修订版本 (5.10 专用)</string>
     <string name="build_revision_placeholder">如: r11</string>
     <string name="build_kernelsu_config">KernelSU 配置</string>
-    <string name="build_runner_config">Runner 配置</string>
-    <string name="build_runner">构建 Runner</string>
-    <string name="build_runner_github_hosted">GitHub 托管（ubuntu-latest）</string>
-    <string name="build_runner_self_hosted">本机 Self-hosted（abk）</string>
-    <string name="build_runner_desc">本机 Self-hosted 适合加速调试；如果本机 WSL Runner 未启动，请选择 GitHub 托管。</string>
-    <string name="build_section_runner_desc">选择此次构建提交到 GitHub 托管环境还是本机自托管 Runner。</string>
     <string name="build_kernelsu_variant">KernelSU 变体</string>
     <string name="build_ksu_branch">KSU 分支</string>
     <string name="build_custom_ksu_ref">自定义 KSU commit/ref</string>
