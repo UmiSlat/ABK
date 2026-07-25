@@ -6165,7 +6165,7 @@ internal fun KernelBuildConfig.toInputMap(): Map<String, String> {
             "use_unicode_bypass" to config.onePlusUseUnicodeBypass.toString()
         )
     }
-    return mapOf(
+    val inputs = mutableMapOf(
         "android_version" to config.androidVersion,
         "kernel_version" to config.kernelVersion,
         "sub_level" to config.subLevel,
@@ -6202,6 +6202,10 @@ internal fun KernelBuildConfig.toInputMap(): Map<String, String> {
             ""
         }
     )
+    if (config.runner == "self-hosted") {
+        inputs["runner"] = "self-hosted"
+    }
+    return inputs
 }
 
 private fun List<CustomExternalModule>?.toWorkflowInput(): String = this.orEmpty()
