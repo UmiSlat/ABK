@@ -2282,8 +2282,10 @@ jobs:
       - name: 克隆虚拟化支持补丁仓库
         if: inputs.virtualization_support != 'off'
         run: |
-          git clone --depth 1 https://github.com/ravindu644/Droidspaces-OSS.git /tmp/virtualization-support-patches
-          echo "VIRTUALIZATION_SUPPORT_PATCHES=/tmp/virtualization-support-patches/Documentation/resources/kernel-patches/GKI" >> $GITHUB_ENV
+          patches_dir="$RUNNER_TEMP/virtualization-support-patches"
+          rm -rf "$patches_dir"
+          git clone --depth 1 https://github.com/ravindu644/Droidspaces-OSS.git "$patches_dir"
+          echo "VIRTUALIZATION_SUPPORT_PATCHES=$patches_dir/Documentation/resources/kernel-patches/GKI" >> $GITHUB_ENV
 
       - name: 集成虚拟化支持
         if: inputs.virtualization_support != 'off'
