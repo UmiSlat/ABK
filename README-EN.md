@@ -241,7 +241,7 @@ The app is built by the [`Build ABK App`](.github/workflows/build-abk-app.yml) w
 
 ### Self-hosted runner (optional)
 
-The app build workflows (`Build ABK App` / `Build ABK App (dev)`) pick their runner from the repository variable `APP_RUNNER`. **When unset, both workflows default to the GitHub-hosted `ubuntu-latest`**, so a fork works with no configuration. To build on your own hardware, see [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md).
+Choose build runners through repository Actions Variables without editing source: `KERNEL_RUNNER` for GKI kernels, `ONEPLUS_RUNNER` for OnePlus/Oplus kernels, and `APP_RUNNER` for APK builds. **Unset variables default to the GitHub-hosted `ubuntu-latest`.** Kernel variables accept a single label (such as `ubuntu-latest` or `abk`) or a JSON array of labels (such as `["self-hosted","abk"]`). See [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md) for configuration and migration from hardcoded self-hosted runners.
 
 ## Contributors
 

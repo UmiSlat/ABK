@@ -1,4 +1,46 @@
-# Self-hosted runner setup
+# Build runner configuration
+
+## 内核构建 / Kernel builds
+
+在仓库的 `Settings → Secrets and variables → Actions → Variables` 中配置以下 **Repository variables**，以后切换机器或托管方式只需修改变量。不要创建同名 Secret 或 Environment variable。
+
+Configure these **repository variables** under `Settings → Secrets and variables → Actions → Variables`. Switch machines or hosting by editing the variable, without changing workflows or the App. Do not use secrets or environment-level variables for runner selection.
+
+| 变量 / Variable | 作用范围 / Scope | 未设置或为空 / Unset or empty |
+| --- | --- | --- |
+| `KERNEL_RUNNER` | 所有调用 `build.yml` 的 GKI 构建：自定义参数、自定义源码、各 Android 版本、全功能矩阵 / All GKI callers of `build.yml`: custom parameters, custom sources, Android version workflows and the feature matrix | `ubuntu-latest` |
+| `ONEPLUS_RUNNER` | 调用 `oneplus-build.yml` 的 OnePlus/Oplus 内核构建 / OnePlus/Oplus kernel builds calling `oneplus-build.yml` | `ubuntu-latest` |
+| `APP_RUNNER` | APK 构建，保持原有的单标签格式 / APK builds, retaining the existing single-label format | `ubuntu-latest` |
+
+`KERNEL_RUNNER` 和 `ONEPLUS_RUNNER` 相互独立，也不继承 `APP_RUNNER`。预检查和产物整理等独立任务仍使用各自原有的 runner。GitHub Actions 页面、App、CLI 发起的构建只要调用相应工作流，都会使用这项设置，无需新增构建参数。
+
+`KERNEL_RUNNER` and `ONEPLUS_RUNNER` are independent and do not inherit `APP_RUNNER`. Separate preflight and artifact-processing jobs retain their existing runners. Builds launched through Actions, the App or CLI use the setting when they call the corresponding workflow; no extra dispatch input is needed.
+
+### 内核变量的取值 / Kernel variable values
+
+| 变量值 / Value | 行为 / Behavior |
+| --- | --- |
+| 不设置、删除变量 / Unset or delete | GitHub-hosted `ubuntu-latest` |
+| `ubuntu-24.04` | 指定 GitHub 托管镜像 / Pin a GitHub-hosted image |
+| `abk` | 使用具有该标签的 runner / Use a runner with this label |
+| `["self-hosted","abk"]` | 同时匹配两个标签，保持本 Fork 原来的 GKI 调度方式 / Match both labels, preserving this fork's previous GKI routing |
+| `["self-hosted","linux","x64","abk"]` | 同时匹配全部标签 / Match all listed labels |
+
+单个标签直接填写，不加引号；多个标签使用非空 JSON 字符串数组，以 `[` 开头，标签用双引号包围，不要在数组外再加引号或前导空格。所有标签必须由同一台 runner 同时满足；这不是按顺序尝试的候选机器列表。选择可运行现有构建脚本的 Linux x86_64 / Ubuntu 环境。
+
+Enter a single label without quotes. For multiple labels, use a non-empty JSON array of strings starting with `[`, with double-quoted labels and no outer quotes or leading whitespace. One runner must match every label; the array is not a fallback list. Choose a Linux x86_64 / Ubuntu environment compatible with the existing build scripts.
+
+### 从固定自托管配置迁移 / Migrate from hardcoded self-hosting
+
+在合并 runner 配置改动前，将仓库变量 `KERNEL_RUNNER` 设为 `["self-hosted","abk"]`，即可继续使用原来的 GKI runner。`ONEPLUS_RUNNER` 不设置则维持 GitHub 托管。以后要切回 GitHub，只需把相应变量改为 `ubuntu-latest` 或删除变量；要换机器，则改为新机器的标签。
+
+Before merging the runner configuration change, set `KERNEL_RUNNER` to `["self-hosted","abk"]` to retain the existing GKI runner. Leave `ONEPLUS_RUNNER` unset to retain GitHub hosting for OnePlus. To switch back to GitHub, set the corresponding variable to `ubuntu-latest` or delete it; to switch machines, change the labels.
+
+匹配的自托管 runner 离线或标签不匹配时，任务会排队，不会自动切回 GitHub。修改变量后请新建一次构建；已有任务不会迁移。自托管构建会跳过自动删除 Chrome APT 源的逻辑，但仍需具备原有依赖安装步骤所需的 sudo 权限。
+
+If no matching self-hosted runner is online, jobs queue rather than falling back to GitHub. Start a new build after changing variables; existing jobs are not migrated. Self-hosted builds skip automatic Chrome APT source deletion but still require sudo for the existing dependency installation steps.
+
+## APK 自托管环境 / APK self-hosted setup
 
 ABK 管理器（APK）的两个工作流——`build-abk-app.yml` 和 `build-abk-app-dev.yml`——通过仓库变量 `APP_RUNNER` 选择运行环境。未设置或为空时使用 GitHub 托管的 `ubuntu-latest`；设置后，该值会直接作为 `runs-on`（例如 `self-hosted` 或自定义标签 `abk-builder`）。Fork 默认无需任何配置即可正常工作。
 
