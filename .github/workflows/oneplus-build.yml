@@ -54,7 +54,8 @@ on:
 jobs:
   build:
     name: "${{ inputs.device_manifest }}-${{ inputs.kernel_version }}-${{ inputs.ksu_variant }}"
-    runs-on: ubuntu-latest
+    # Independent of KERNEL_RUNNER so GKI and OnePlus can use different machines.
+    runs-on: ${{ startsWith(vars.ONEPLUS_RUNNER, '[') && fromJSON(vars.ONEPLUS_RUNNER) || vars.ONEPLUS_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 120
 
     env:
@@ -231,6 +232,10 @@ jobs:
         run: |
           set -euo pipefail
           disable_broken_chrome_source() {
+            if [ "${{ runner.environment }}" != "github-hosted" ]; then
+              echo "保留自托管 Runner 的 Chrome APT 源"
+              return 0
+            fi
             local source
             while IFS= read -r source; do
               echo "::warning::禁用与构建无关的 Chrome APT 源: $source"
