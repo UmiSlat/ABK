@@ -7,11 +7,12 @@ KSU_RELEASE_WORKFLOW="release.yml"
 
 ksu_github_api_curl() {
   local repo="${KSU_API_REPO:-}"
-  local auth=()
+  # Bash 3.2 (macOS) treats an empty array expansion as unbound under set -u.
   if [ -n "${GITHUB_TOKEN:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ] && [ "$repo" = "$GITHUB_REPOSITORY" ]; then
-    auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "$@"
+  else
+    curl -fsSL -H "Accept: application/vnd.github+json" "$@"
   fi
-  curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" "$@"
 }
 
 ksu_workflow_run_id_for_head_sha() {

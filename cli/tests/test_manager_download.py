@@ -92,8 +92,9 @@ class ManagerDownloadTests(unittest.TestCase):
                 ["bash", str(SCRIPT), repo, SHA, str(output)],
                 env=env, capture_output=True, text=True, timeout=20,
             )
-            requests = [json.loads(line) for line in
-                        (root / "requests.jsonl").read_text().splitlines()]
+            request_log = root / "requests.jsonl"
+            self.assertTrue(request_log.is_file(), result.stdout + result.stderr)
+            requests = [json.loads(line) for line in request_log.read_text().splitlines()]
             files = {path.relative_to(output).as_posix(): path.read_bytes()
                      for path in output.rglob("*") if path.is_file()}
             return result, requests, files
