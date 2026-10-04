@@ -5959,7 +5959,17 @@ jobs:
 
           def ensure_post_execveat_wrapper(path):
               text = path.read_text()
+              guard = """    /* ABK: never inject an anonymous driver fd into ordinary execs. */
+              if (!retval || *retval < 0 || !filename_ptr || !*filename_ptr ||
+                  IS_ERR(*filename_ptr) || strcmp((*filename_ptr)->name, KSUD_PATH))
+                  return 0;
+          """
               if "int ksu_handle_post_execveat_sucompat(" in text:
+                  old = "    if (*retval >= 0)\n        (void)ksu_install_su_fd();"
+                  if "ABK: never inject an anonymous driver fd" not in text and old in text:
+                      path.write_text(text.replace(old, guard + old, 1))
+                      print(f"  已修复 {path} 的 post-exec su-session fd 范围")
+                      return True
                   return False
               marker = "\n// sucompat: permitted process can execute 'su' to gain root access."
               if marker not in text:
@@ -5978,6 +5988,10 @@ jobs:
                                                 void *argv_user, void *envp_user,
                                                 int *flags, int *retval)
           {
+              /* ABK: never inject an anonymous driver fd into ordinary execs. */
+              if (!retval || *retval < 0 || !filename_ptr || !*filename_ptr ||
+                  IS_ERR(*filename_ptr) || strcmp((*filename_ptr)->name, KSUD_PATH))
+                  return 0;
               if (*retval >= 0)
                   (void)ksu_install_su_fd();
               return 0;
