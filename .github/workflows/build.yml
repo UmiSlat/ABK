@@ -3136,7 +3136,7 @@ jobs:
 
           echo " 添加 TCP Congestion Control (BBR) 支持"
           # 应用 BBRv3 补丁仅有6.1版本
-          if [ "${{ inputs.kernel_version }}" = "6.1" && false ]; then
+          if [ "${{ inputs.kernel_version }}" = "6.1" ] && false; then
             echo "应用 BBRv3 补丁"
             PATCH_FILE="$KERNEL_PATCHES/bbr/bbrv3-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
             echo "→ 应用补丁: bbrv3-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
