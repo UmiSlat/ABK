@@ -36,9 +36,29 @@ Enter a single label without quotes. For multiple labels, use a non-empty JSON a
 
 Before merging the runner configuration change, set `KERNEL_RUNNER` to `["self-hosted","abk"]` to retain the existing GKI runner. Leave `ONEPLUS_RUNNER` unset to retain GitHub hosting for OnePlus. To switch back to GitHub, set the corresponding variable to `ubuntu-latest` or delete it; to switch machines, change the labels.
 
-匹配的自托管 runner 离线或标签不匹配时，任务会排队，不会自动切回 GitHub。修改变量后请新建一次构建；已有任务不会迁移。自托管构建会跳过自动删除 Chrome APT 源的逻辑，但仍需具备原有依赖安装步骤所需的 sudo 权限。
+匹配的自托管 runner 离线或标签不匹配时，任务会排队，不会自动切回 GitHub。修改变量后请新建一次构建；已有任务不会迁移。GKI 构建的磁盘清理步骤仅在 GitHub 托管环境执行，避免在自托管机器上卸载工具链、删除 SDK 或关闭 swap。自托管构建也会跳过自动删除 Chrome APT 源的逻辑，但仍需具备原有依赖安装步骤所需的 sudo 权限。
 
-If no matching self-hosted runner is online, jobs queue rather than falling back to GitHub. Start a new build after changing variables; existing jobs are not migrated. Self-hosted builds skip automatic Chrome APT source deletion but still require sudo for the existing dependency installation steps.
+If no matching self-hosted runner is online, jobs queue rather than falling back to GitHub. Start a new build after changing variables; existing jobs are not migrated. The GKI disk cleanup step only runs on GitHub-hosted runners, preserving toolchains, SDKs and swap on self-hosted machines. Self-hosted builds also skip automatic Chrome APT source deletion but still require sudo for the existing dependency installation steps.
+
+### 服务运行但 Runner 离线 / Service running but runner offline
+
+本地服务处于 `active` 不代表它能收到任务。请同时检查 GitHub 的 `Settings → Actions → Runners` 是否显示 `Online`，以及 runner 日志中是否反复出现 `Runner connect error` 或 `broker.actions.githubusercontent.com/message` 超时。
+
+An `active` local service does not guarantee that it can receive jobs. Check that GitHub's `Settings → Actions → Runners` shows `Online`, and inspect the runner logs for repeated `Runner connect error` messages or timeouts from `broker.actions.githubusercontent.com/message`.
+
+如果网络需要代理，请在 runner 安装目录的 `.env` 中设置小写代理变量，然后重启 runner 服务。systemd 服务不会自动继承交互式终端的代理设置。以下示例假定代理在该 Linux 环境的 `127.0.0.1:7897` 可访问；请按实际地址调整。
+
+If your network requires a proxy, set lowercase proxy variables in `.env` in the runner installation directory, then restart the runner service. A systemd service does not automatically inherit proxy settings from an interactive shell. This example assumes the proxy is reachable from Linux at `127.0.0.1:7897`; adjust the address for your environment.
+
+```dotenv
+http_proxy=http://127.0.0.1:7897
+https_proxy=http://127.0.0.1:7897
+no_proxy=localhost,127.0.0.1,::1
+```
+
+代理变量在 runner 启动时读取，详见 [GitHub 代理配置文档](https://docs.github.com/en/actions/how-tos/manage-runners/use-proxy-servers)。
+
+Proxy variables are read when the runner starts; see [GitHub's proxy configuration documentation](https://docs.github.com/en/actions/how-tos/manage-runners/use-proxy-servers).
 
 ## APK 自托管环境 / APK self-hosted setup
 

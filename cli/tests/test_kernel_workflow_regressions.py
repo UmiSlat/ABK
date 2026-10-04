@@ -1,5 +1,8 @@
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,18 +32,47 @@ class KernelWorkflowRegressionTests(unittest.TestCase):
         self.assertIn('bash "$setup_script" "$requested_ref"', case)
         self.assertIn('requested_head="$(git -C KernelSU rev-parse', case)
 
-    def test_development_refs_are_reachable_successful_main_builds(self):
-        expected = {
-            "OFFICIAL_DEV_REF": "33d0c9205df47b6b1b61c25c13afa164b88871d1",
-            "SUKISU_DEV_REF": "9fbe8fe8ca90c62c259c5894bf96d02ac31209b9",
-            "RESUKISU_DEV_REF": "246d3e52e667cb72ce8f70c93b70d3b42b100b76",
-        }
-        for variable, sha in expected.items():
+    def test_development_refs_are_immutable_commit_pins(self):
+        for variable in ("OFFICIAL_DEV_REF", "SUKISU_DEV_REF", "RESUKISU_DEV_REF"):
             with self.subTest(variable=variable):
-                self.assertRegex(
-                    self.ref_script,
-                    rf'(?m)^{variable}="{sha}"$',
-                )
+                pins = re.findall(rf'(?m)^{variable}="([a-f0-9]{{40}})"(?:\s*#.*)?$', self.ref_script)
+                self.assertEqual(len(pins), 1, f"{variable} must have one full immutable commit SHA")
+                self.assertNotEqual(pins[0], "0" * 40)
+
+    @unittest.skipUnless(os.name != "nt" and shutil.which("bash"), "resolver requires POSIX bash")
+    def test_development_tier_selects_variant_pin_without_network(self):
+        variants = (
+            ("Official", "OFFICIAL_DEV_REF", "1" * 40, "tiann/KernelSU"),
+            ("SukiSU", "SUKISU_DEV_REF", "2" * 40, "SukiSU-Ultra/SukiSU-Ultra"),
+            ("ReSukiSU", "RESUKISU_DEV_REF", "3" * 40, "ReSukiSU/ReSukiSU"),
+        )
+        # Distinct canaries detect accidentally selecting Stable or another
+        # variant, even when the real Stable/Dev pins happen to be identical.
+        fixture = self.ref_script
+        for _, variable, sha, _ in variants:
+            fixture, count = re.subn(rf'(?m)^{variable}="[a-f0-9]{{40}}"', f'{variable}="{sha}"', fixture)
+            self.assertEqual(count, 1)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            script = root / "resolve.sh"
+            script.write_text(fixture, encoding="utf-8")
+            curl = root / "curl"
+            curl.write_text("#!/bin/sh\nprintf 'unexpected network lookup for a pinned tier\\n' >&2\nexit 97\n", encoding="utf-8")
+            curl.chmod(0o755)
+            for variant, _, sha, repo in variants:
+                with self.subTest(variant=variant):
+                    exported = root / f"{variant}.env"
+                    env = dict(os.environ)
+                    for key in ("BASH_ENV", "ENV", "RESOLVED_KSU_SHA", "RESOLVED_KSU_REPO", "RESOLVED_KSU_SOURCE_BRANCH", "GITHUB_TOKEN"):
+                        env.pop(key, None)
+                    env.update(KSU_VARIANT=variant, KSU_BRANCH="Dev(开发)", GITHUB_ENV=str(exported), PATH=str(root) + os.pathsep + env["PATH"])
+                    result = subprocess.run([shutil.which("bash"), str(script)], env=env, capture_output=True, text=True, encoding="utf-8")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    values = dict(line.split("=", 1) for line in exported.read_text(encoding="utf-8").splitlines())
+                    self.assertEqual(values["BRANCH"], sha)
+                    self.assertEqual(values["RESOLVED_KSU_SHA"], sha)
+                    self.assertEqual(values["RESOLVED_KSU_REPO"], repo)
+                    self.assertEqual(values["RESOLVED_KSU_SOURCE_BRANCH"], "")
 
     def test_resolved_sha_defaults_to_selected_variant_ref(self):
         self.assertIn(
