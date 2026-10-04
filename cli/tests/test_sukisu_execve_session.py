@@ -1,6 +1,7 @@
 """Exercise the generated SUSFS exec hooks through their real C return values."""
 import ast
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -37,7 +38,9 @@ class SukiSUExecSessionTests(unittest.TestCase):
         step = workflow.split("- name: 最终修复 SukiSU/ReSukiSU 源码兼容", 1)[1]
         code = textwrap.dedent(step.split("python3 - <<'PY'\n", 1)[1].split("\n          PY", 1)[0])
         functions = [node for node in ast.parse(code).body if isinstance(node, ast.FunctionDef)]
-        namespace = {"Path": Path, "re": re}
+        # Workflow progress messages are not test output; Windows CI may use
+        # a console encoding that cannot represent the Chinese messages.
+        namespace = {"Path": Path, "re": re, "print": lambda *args, **kwargs: None}
         exec(compile(ast.Module(body=functions, type_ignores=[]), str(WORKFLOW), "exec"), namespace)
         cls.ensure_post = staticmethod(namespace["ensure_post_execveat_wrapper"])
 
@@ -57,7 +60,7 @@ class SukiSUExecSessionTests(unittest.TestCase):
         )
         self.patcher.patch_sucompat_c(path, [])
         self.ensure_post(path)
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
 
     def run_hooks(self, source, directory):
         hooks = "\n".join(c_function(source, name) for name in (
@@ -142,11 +145,11 @@ int main(void) {
 }
 '''
         c_path = directory / "hooks.c"
-        binary = directory / "hooks"
-        c_path.write_text(harness)
-        compiled = subprocess.run([shutil.which("cc"), "-std=gnu11", str(c_path), "-o", str(binary)], capture_output=True, text=True)
+        binary = directory / ("hooks.exe" if os.name == "nt" else "hooks")
+        c_path.write_text(harness, encoding="utf-8")
+        compiled = subprocess.run([shutil.which("cc"), "-std=gnu11", str(c_path), "-o", str(binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.assertEqual(compiled.returncode, 0, compiled.stderr)
-        result = subprocess.run([str(binary)], capture_output=True, text=True)
+        result = subprocess.run([str(binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_generated_hooks_do_not_inject_fd_into_zygote(self):
@@ -165,14 +168,14 @@ int main(void) {
                 old_pre = pre.replace("return 1;", "return 0;").replace("return ret;", "return 0;")
                 post = c_function(source, "ksu_handle_post_execveat_sucompat")
                 old_post = post[:post.index("{") + 1] + "\n    if (*retval >= 0)\n        (void)ksu_install_su_fd();\n    return 0;\n}"
-                path.write_text(source.replace(pre, old_pre).replace(post, old_post))
+                path.write_text(source.replace(pre, old_pre).replace(post, old_post), encoding="utf-8")
                 self.patcher.patch_sucompat_c(path, [])
                 self.ensure_post(path)
-                repaired = path.read_text()
+                repaired = path.read_text(encoding="utf-8")
                 self.run_hooks(repaired, directory)
                 self.patcher.patch_sucompat_c(path, [])
                 self.ensure_post(path)
-                self.assertEqual(path.read_text(), repaired)
+                self.assertEqual(path.read_text(encoding="utf-8"), repaired)
 
 
 if __name__ == "__main__":
