@@ -450,6 +450,7 @@ jobs:
           exit 1
 
       - name: 清理磁盘空间
+        if: runner.environment == 'github-hosted'
         uses: endersonmenezes/free-disk-space@v3
         with:
           remove_android: true
