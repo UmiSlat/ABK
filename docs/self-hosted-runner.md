@@ -40,6 +40,23 @@ Before merging the runner configuration change, set `KERNEL_RUNNER` to `["self-h
 
 If no matching self-hosted runner is online, jobs queue rather than falling back to GitHub. Start a new build after changing variables; existing jobs are not migrated. The GKI disk cleanup step only runs on GitHub-hosted runners, preserving toolchains, SDKs and swap on self-hosted machines. Self-hosted builds also skip automatic Chrome APT source deletion but still require sudo for the existing dependency installation steps.
 
+### 自托管下载缓存 / Local download cache
+
+GKI 自托管构建默认将下载缓存放在 `~/.cache/abk-downloads/<仓库标识>/v1`，位于 Actions 工作目录之外。`actions/checkout` 继续清理每轮工作目录，缓存不会被一起删除。
+
+分支和标签先查询远端提交；提交未变时直接复用 Git 对象，有更新时只获取缺少的对象。固定 SHA 已缓存时无需再次访问该仓库。AOSP manifest 和各源码项目由 `repo sync` 增量更新，随后记录每个项目的固定 SHA，复制干净的源码及独立 Git 元数据，并逐一核验构建目录的提交。仅不可变 Git 包可使用本地硬链接，源码文件不会与缓存共用可写文件。日志和运行摘要会列出每个项目的旧、新提交及复用情况。补丁只应用到本轮构建源码，缓存中的源码不参与打补丁。
+
+覆盖 AOSP 源码及 Clang/Rust/JDK 等预编译资源、GCC、打包工具、SUSFS、公共补丁仓库和指定提交的自定义源码。KernelSU 上游安装脚本、APT 索引等少量请求仍按原流程执行。自托管缓存启用时复用本机 ccache，并跳过工具和 ccache 的云端缓存下载；GitHub 托管构建继续使用原云端缓存。
+
+| Repository variable | 默认值 | 用途 |
+| --- | --- | --- |
+| `KERNEL_LOCAL_CACHE` | `auto` | 自托管启用；设为 `off` 可关闭 |
+| `KERNEL_LOCAL_CACHE_DIR` | `~/.cache/abk-downloads` | 可指定工作目录之外的绝对路径，脚本会添加仓库隔离子目录 |
+
+第一次缓存仍需要下载。后续仍会进行小量远端版本查询；网络查询失败会终止，不会悄悄使用旧分支。不同仓库、manifest 分支分开存储，同一缓存的更新使用文件锁。缓存会占用额外磁盘空间；需要清理时先等待使用它的构建结束。
+
+Self-hosted GKI builds keep repository-scoped downloads outside the Actions workspace. Git refs are compared before fetching; cached immutable commits need no remote lookup. A canonical, unpatched AOSP client is synced incrementally, and each build gets a clean copy with independent source files and shallow-clone metadata, checked against every resolved commit. Only immutable Git packs may be hard-linked locally. Logs and step summaries show commit changes and reuse. Set `KERNEL_LOCAL_CACHE=off` to opt out, or set `KERNEL_LOCAL_CACHE_DIR` to an absolute base path outside the workspace. Hosted runners retain their cloud-cache behavior. Small requests from upstream KernelSU setup scripts and APT remain unchanged. Allow the first download and additional disk space; stop cache users before removing the cache.
+
 ### 服务运行但 Runner 离线 / Service running but runner offline
 
 本地服务处于 `active` 不代表它能收到任务。请同时检查 GitHub 的 `Settings → Actions → Runners` 是否显示 `Online`，以及 runner 日志中是否反复出现 `Runner connect error` 或 `broker.actions.githubusercontent.com/message` 超时。
