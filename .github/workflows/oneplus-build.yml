@@ -54,8 +54,8 @@ on:
 jobs:
   build:
     name: "${{ inputs.device_manifest }}-${{ inputs.kernel_version }}-${{ inputs.ksu_variant }}"
-    # Independent of KERNEL_RUNNER so GKI and OnePlus can use different machines.
-    runs-on: ${{ startsWith(vars.ONEPLUS_RUNNER, '[') && fromJSON(vars.ONEPLUS_RUNNER) || vars.ONEPLUS_RUNNER || 'ubuntu-latest' }}
+    # Independent of GKI: false uses GitHub; true/unset retains the saved runner labels.
+    runs-on: ${{ vars.ONEPLUS_SELF_HOSTED == 'false' && 'ubuntu-latest' || (startsWith(vars.ONEPLUS_RUNNER, '[') && fromJSON(vars.ONEPLUS_RUNNER) || vars.ONEPLUS_RUNNER || 'ubuntu-latest') }}
     timeout-minutes: 120
 
     env:
