@@ -243,6 +243,8 @@ The app is built by the [`Build ABK App`](.github/workflows/build-abk-app.yml) w
 
 Choose build runners through repository Actions Variables without editing source: `KERNEL_RUNNER` for GKI kernels, `ONEPLUS_RUNNER` for OnePlus/Oplus kernels, and `APP_RUNNER` for APK builds. **Unset variables default to the GitHub-hosted `ubuntu-latest`.** Kernel variables accept a single label (such as `ubuntu-latest` or `abk`) or a JSON array of labels (such as `["self-hosted","abk"]`). See [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md) for configuration and migration from hardcoded self-hosted runners.
 
+After saving runner labels, use `KERNEL_SELF_HOSTED` (GKI) or `ONEPLUS_SELF_HOSTED` (OnePlus/Oplus) as a toggle: `false` forces GitHub hosting, while `true` restores the saved runner configuration. An unset toggle preserves existing behavior. No label edits, modified APK or additional build inputs are needed.
+
 ## Contributors
 
 The following list is normalized from the current git history to identifiable GitHub usernames/links and sorted by username. Automation accounts and identities without a reliable mapping are filtered out:

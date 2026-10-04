@@ -175,8 +175,9 @@ on:
 jobs:
   build-kernel:
     name: "${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}"
-    # Repository variable: a runner label or a JSON array of labels. See docs/self-hosted-runner.md.
-    runs-on: ${{ startsWith(vars.KERNEL_RUNNER, '[') && fromJSON(vars.KERNEL_RUNNER) || vars.KERNEL_RUNNER || 'ubuntu-latest' }}
+    # Set KERNEL_SELF_HOSTED=false to use GitHub without changing the saved runner labels.
+    # true/unset retains KERNEL_RUNNER selection. See docs/self-hosted-runner.md.
+    runs-on: ${{ vars.KERNEL_SELF_HOSTED == 'false' && 'ubuntu-latest' || (startsWith(vars.KERNEL_RUNNER, '[') && fromJSON(vars.KERNEL_RUNNER) || vars.KERNEL_RUNNER || 'ubuntu-latest') }}
     timeout-minutes: 60
 
     env:

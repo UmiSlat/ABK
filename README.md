@@ -242,6 +242,8 @@ App 编译由 [`Build ABK App`](.github/workflows/build-abk-app.yml) 工作流�
 
 通过仓库的 Actions Variables 切换构建 runner，无需修改源码：GKI 内核使用 `KERNEL_RUNNER`，OnePlus/Oplus 内核使用 `ONEPLUS_RUNNER`，App 编译使用 `APP_RUNNER`。**未设置时默认使用 GitHub 托管的 `ubuntu-latest`**。内核变量支持单个标签（如 `ubuntu-latest`、`abk`）或 JSON 标签数组（如 `["self-hosted","abk"]`）。配置方式及从固定自托管配置迁移的步骤见 [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md)。
 
+保存好机器标签后，可用 `KERNEL_SELF_HOSTED`（GKI）或 `ONEPLUS_SELF_HOSTED`（OnePlus/Oplus）作为开关：`false` 强制使用 GitHub 托管，`true` 恢复保存的 runner 配置；不设置开关则维持原有行为。无需修改标签或上游 APK，也不增加构建输入参数。
+
 ## 贡献者
 
 以下列表按当前 git 历史归一化到可识别的 GitHub 用户名/链接，并按用户名排序；自动化账号与无法可靠映射的身份已过滤：

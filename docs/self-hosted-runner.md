@@ -6,6 +6,24 @@
 
 Configure these **repository variables** under `Settings → Secrets and variables → Actions → Variables`. Switch machines or hosting by editing the variable, without changing workflows or the App. Do not use secrets or environment-level variables for runner selection.
 
+### 自托管开关 / Self-hosted toggle
+
+先把自托管标签保存在 `KERNEL_RUNNER`（例如 `["self-hosted","abk"]`），以后只需编辑 `KERNEL_SELF_HOSTED`：
+
+| 开关值 / Toggle value | 行为 / Behavior |
+| --- | --- |
+| `true` | 使用保存的 `KERNEL_RUNNER` / Use the saved `KERNEL_RUNNER` |
+| `false` | 强制使用 GitHub 托管的 `ubuntu-latest`，保留原标签 / Force GitHub-hosted `ubuntu-latest` without changing saved labels |
+| 未设置或为空 / Unset or empty | 保持原有行为，按 `KERNEL_RUNNER` 选择 / Preserve existing `KERNEL_RUNNER` selection |
+
+变量值直接填写小写 `true` 或 `false`，不要加引号或空格。GitHub Variables 页面是文本编辑框；这里把这两个值用作开关。`KERNEL_RUNNER` 未配置时仍默认使用 `ubuntu-latest`，所以启用自托管前应先保存机器标签。
+
+OnePlus/Oplus 对应的独立开关是 `ONEPLUS_SELF_HOSTED`，机器标签保存在 `ONEPLUS_RUNNER`。这些开关不影响 APK 的 `APP_RUNNER`，也不占用 `workflow_dispatch` 的输入名额，继续使用上游 APK 即可。修改后发起新构建；已排队或正在运行的任务不会因此迁移。
+
+Save self-hosted labels in `KERNEL_RUNNER` first, then toggle `KERNEL_SELF_HOSTED` between the plain text values `true` and `false`, without quotes or whitespace. `false` forces GitHub-hosted `ubuntu-latest`; `true` restores the saved runner selection. An unset toggle preserves previous behavior. If no runner labels are configured, the default remains `ubuntu-latest`. OnePlus/Oplus uses the independent `ONEPLUS_SELF_HOSTED` toggle and `ONEPLUS_RUNNER` labels. APK builds are unaffected. No dispatch inputs or modified APK are required. Changes apply to new builds, not jobs already queued or running.
+
+### Runner 标签配置 / Runner label configuration
+
 | 变量 / Variable | 作用范围 / Scope | 未设置或为空 / Unset or empty |
 | --- | --- | --- |
 | `KERNEL_RUNNER` | 所有调用 `build.yml` 的 GKI 构建：自定义参数、自定义源码、各 Android 版本、全功能矩阵 / All GKI callers of `build.yml`: custom parameters, custom sources, Android version workflows and the feature matrix | `ubuntu-latest` |
@@ -16,7 +34,7 @@ Configure these **repository variables** under `Settings → Secrets and variabl
 
 `KERNEL_RUNNER` and `ONEPLUS_RUNNER` are independent and do not inherit `APP_RUNNER`. Separate preflight and artifact-processing jobs retain their existing runners. Builds launched through Actions, the App or CLI use the setting when they call the corresponding workflow; no extra dispatch input is needed.
 
-### 内核变量的取值 / Kernel variable values
+### 内核 Runner 标签变量的取值 / Kernel runner label values
 
 | 变量值 / Value | 行为 / Behavior |
 | --- | --- |
@@ -32,9 +50,9 @@ Enter a single label without quotes. For multiple labels, use a non-empty JSON a
 
 ### 从固定自托管配置迁移 / Migrate from hardcoded self-hosting
 
-在合并 runner 配置改动前，将仓库变量 `KERNEL_RUNNER` 设为 `["self-hosted","abk"]`，即可继续使用原来的 GKI runner。`ONEPLUS_RUNNER` 不设置则维持 GitHub 托管。以后要切回 GitHub，只需把相应变量改为 `ubuntu-latest` 或删除变量；要换机器，则改为新机器的标签。
+在合并 runner 配置改动前，将仓库变量 `KERNEL_RUNNER` 设为 `["self-hosted","abk"]`、`KERNEL_SELF_HOSTED` 设为 `true`，即可继续使用原来的 GKI runner。`ONEPLUS_RUNNER` 不设置则维持 GitHub 托管。以后要切回 GitHub，只需将 `KERNEL_SELF_HOSTED` 改为 `false`；改回 `true` 即恢复保存的机器标签。要换机器时才需要修改 `KERNEL_RUNNER`。
 
-Before merging the runner configuration change, set `KERNEL_RUNNER` to `["self-hosted","abk"]` to retain the existing GKI runner. Leave `ONEPLUS_RUNNER` unset to retain GitHub hosting for OnePlus. To switch back to GitHub, set the corresponding variable to `ubuntu-latest` or delete it; to switch machines, change the labels.
+Before merging the runner configuration change, set `KERNEL_RUNNER` to `["self-hosted","abk"]` and `KERNEL_SELF_HOSTED` to `true` to retain the existing GKI runner. Leave `ONEPLUS_RUNNER` unset to retain GitHub hosting for OnePlus. Set `KERNEL_SELF_HOSTED` to `false` to switch to GitHub and back to `true` to restore the saved labels. Only edit `KERNEL_RUNNER` when changing machines.
 
 匹配的自托管 runner 离线或标签不匹配时，任务会排队，不会自动切回 GitHub。修改变量后请新建一次构建；已有任务不会迁移。GKI 构建的磁盘清理步骤仅在 GitHub 托管环境执行，避免在自托管机器上卸载工具链、删除 SDK 或关闭 swap。自托管构建也会跳过自动删除 Chrome APT 源的逻辑，但仍需具备原有依赖安装步骤所需的 sudo 权限。
 
