@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -149,8 +150,20 @@ int main(void) {
         c_path.write_text(harness, encoding="utf-8")
         compiled = subprocess.run([shutil.which("cc"), "-std=gnu11", str(c_path), "-o", str(binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.assertEqual(compiled.returncode, 0, compiled.stderr)
-        result = subprocess.run([str(binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        try:
+            result = subprocess.run([str(binary)], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        finally:
+            # Windows runners can briefly retain a handle to the exited binary.
+            # Retry that cleanup without suppressing persistent errors.
+            for attempt in range(50):
+                try:
+                    binary.unlink(missing_ok=True)
+                    break
+                except PermissionError:
+                    if os.name != "nt" or attempt == 49:
+                        raise
+                    time.sleep(0.1)
 
     def test_generated_hooks_do_not_inject_fd_into_zygote(self):
         for modern in (True, False):
