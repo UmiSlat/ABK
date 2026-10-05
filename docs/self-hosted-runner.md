@@ -73,6 +73,10 @@ GKI 自托管构建默认将下载缓存放在 `~/.cache/abk-downloads/<仓库�
 
 第一次缓存仍需要下载。后续仍会进行小量远端版本查询；网络查询失败会终止，不会悄悄使用旧分支。不同仓库、manifest 分支分开存储，同一缓存的更新使用文件锁。缓存会占用额外磁盘空间；需要清理时先等待使用它的构建结束。
 
+启用 `config/config` 的 SUSFS 固定提交时，缓存会保留对应分支的完整历史，再检出配置的提交，支持短 SHA 和完整 SHA。首次使用或从浅缓存切换时需要下载历史，之后复用；仍会查询分支更新，但最终检出的版本始终是指定提交。私有自定义源码的认证仅对拉取子进程生效，不再写入 runner 的全局或源码仓库 Git 配置；此改动不会自动清除旧版本构建已经留下的配置。
+
+Pinned SUSFS builds cache the selected branch's full history before checking out the configured short or full SHA. The first build (or an upgrade from a shallow cache) downloads history; later builds reuse it. Branch updates are still checked, but the checkout remains pinned. Private custom-source authentication is scoped to the checkout process and is not written into global or repository Git configuration. This does not remove configuration left by older workflow versions.
+
 Self-hosted GKI builds keep repository-scoped downloads outside the Actions workspace. Git refs are compared before fetching; cached immutable commits need no remote lookup. A canonical, unpatched AOSP client is synced incrementally, and each build gets a clean copy with independent source files and shallow-clone metadata, checked against every resolved commit. Only immutable Git packs may be hard-linked locally. Logs and step summaries show commit changes and reuse. Set `KERNEL_LOCAL_CACHE=off` to opt out, or set `KERNEL_LOCAL_CACHE_DIR` to an absolute base path outside the workspace. Hosted runners retain their cloud-cache behavior. Small requests from upstream KernelSU setup scripts and APT remain unchanged. Allow the first download and additional disk space; stop cache users before removing the cache.
 
 ### 服务运行但 Runner 离线 / Service running but runner offline

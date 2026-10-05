@@ -1776,9 +1776,9 @@ def _config_process_lock(timeout=120):
         try:
             if os.name != "nt":
                 os.fchmod(stream.fileno(), 0o600)
-            stream.seek(0, os.SEEK_END)
-            if stream.tell() == 0:
-                stream.write(b"\0")
+            # Windows can lock a byte range beyond EOF. Do not seed the file:
+            # another process may lock byte zero between the size check and
+            # that write, causing an unhandled PermissionError on first use.
             deadline = time.monotonic() + timeout
             contention_errnos = {errno.EACCES, errno.EAGAIN}
             if os.name == "nt" and hasattr(errno, "EDEADLK"):
