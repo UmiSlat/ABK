@@ -105,6 +105,21 @@ exec "$REVIEW_REAL_GIT" "$@"
             with self.subTest(cached=cached):
                 self.run_checkout(cached, fail=True)
 
+    def test_private_auth_accepts_wrapping_base64_without_gnu_flags(self):
+        self.install_git_observer()
+        encoder = self.root / "bin/base64"
+        encoder.write_text('''#!/usr/bin/env python3
+import base64
+import sys
+assert len(sys.argv) == 1, "GNU-only base64 flags are not supported"
+encoded = base64.b64encode(sys.stdin.buffer.read()).decode()
+sys.stdout.write("\\r\\n".join(encoded[i:i+8] for i in range(0, len(encoded), 8)) + "\\r\\n")
+''', encoding="utf-8")
+        encoder.chmod(0o755)
+        self.run_checkout(cached=True)
+        expected = "AUTHORIZATION: basic " + base64.b64encode(b"x-access-token:test-token-never-real").decode()
+        self.assertEqual(set((self.root / "auth.log").read_text().splitlines()), {expected})
+
     def test_public_checkout_does_not_set_auth_headers(self):
         self.install_git_observer()
         for cached in (False, True):

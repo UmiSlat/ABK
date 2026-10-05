@@ -8,7 +8,7 @@ if [ "${SOURCE_PRIVATE:-false}" = "true" ]; then
     echo "::error::缺少 ABK_CUSTOM_SOURCE_GITHUB_TOKEN，无法访问私有源码仓。"
     exit 1
   fi
-  access_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$ABK_CUSTOM_SOURCE_GITHUB_TOKEN" | base64 -w0)"
+  access_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$ABK_CUSTOM_SOURCE_GITHUB_TOKEN" | base64 | tr -d '\r\n')"
   printf '::add-mask::%s\n' "$access_header"
   config_count="${GIT_CONFIG_COUNT:-0}"
   # Reset inherited headers before adding this request's credentials.

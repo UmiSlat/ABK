@@ -5035,18 +5035,19 @@ jobs:
                           const char __user *argv_user_ptr = get_user_arg_ptr(*argv_user, 0);
                           struct ksu_sulog_pending_event *pending_sucompat = NULL;
 
+                          pr_info("hook_manager: escape to root for init executing ksud: %d\\n", current->pid);
+                          pending_sucompat = ksu_sulog_capture_sucompat(filename->name, (struct user_arg_ptr *)argv_user, GFP_KERNEL);
+                          ret = escape_to_root_for_init();
+                          if (ret) {
+                              pr_err("escape_to_root_for_init() failed: %d\\n", ret);
+                              return ret;
+                          }
                           if (!argv_user_ptr || IS_ERR(argv_user_ptr)) {
                               pr_err("!argv_user_ptr || IS_ERR(argv_user_ptr)\\n");
                               return -EFAULT;
                           }
-                          pr_info("hook_manager: escape to root for init executing ksud: %d\\n", current->pid);
-                          pending_sucompat = ksu_sulog_capture_sucompat(filename->name, (struct user_arg_ptr *)argv_user, GFP_KERNEL);
-                          ret = escape_to_root_for_init();
                           ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
-                          if (ret) {
-                              pr_err("escape_to_root_for_init() failed: %d\\n", ret);
-                          }
-                          return ret;
+                          return 0;
                       } else if (likely(strstr(filename->name, "/app_process") == NULL &&
                                          strstr(filename->name, "/adbd") == NULL) &&
                                  !susfs_is_current_proc_umounted()) {
@@ -5078,33 +5079,26 @@ jobs:
                                                int *__never_use_flags)
               {
                   struct filename *filename;
-                  const char __user *argv_user_ptr;
+                  const char __user *argv_user_ptr = get_user_arg_ptr(*((struct user_arg_ptr *)argv_user), 0);
                   struct ksu_sulog_pending_event *pending_sucompat = NULL;
                   int ret;
 
-                  if (unlikely(!filename_ptr || !*filename_ptr || !argv_user || !envp_user))
-                      return 1;
+                  if (unlikely(!filename_ptr))
+                      return 0;
 
                   filename = *filename_ptr;
-                  if (IS_ERR(filename) || !filename->name)
-                      return 1;
+                  if (IS_ERR(filename))
+                      return 0;
 
-                  /* Zero means a successful su session to the SUSFS caller. */
                   if (!ksu_handle_execveat_init(filename, (struct user_arg_ptr *)argv_user, (struct user_arg_ptr *)envp_user))
-                      return strcmp(filename->name, KSUD_PATH) ? 1 : 0;
+                      return 0;
 
                   if (likely(memcmp(filename->name, su_path, sizeof(su_path))))
-                      return 1;
+                      return 0;
 
                   if (current_chrooted()) {
                       pr_err("ksu_handle_execveat_sucompat: su found but NOT allowed! Because current process is running in chrooted environment\\n");
-                      return 1;
-                  }
-
-                  argv_user_ptr = get_user_arg_ptr(*((struct user_arg_ptr *)argv_user), 0);
-                  if (!argv_user_ptr || IS_ERR(argv_user_ptr)) {
-                      pr_err("!argv_user_ptr || IS_ERR(argv_user_ptr)\\n");
-                      return -EFAULT;
+                      return 0;
                   }
 
                   pr_info("ksu_handle_execveat_sucompat: su found\\n");
@@ -5117,8 +5111,13 @@ jobs:
                   if (ret)
                       pr_err("escape_with_root_profile() failed: %d\\n", ret);
 
+                  if (!argv_user_ptr || IS_ERR(argv_user_ptr)) {
+                      pr_err("!argv_user_ptr || IS_ERR(argv_user_ptr)\\n");
+                      return 0;
+                  }
+
                   ksu_sulog_emit_pending(pending_sucompat, ret, GFP_KERNEL);
-                  return ret;
+                  return 0;
               }
 
               #ifdef CONFIG_KSU_SUSFS
@@ -5126,12 +5125,8 @@ jobs:
                                                      void *argv_user, void *envp_user,
                                                      int *flags, int *retval)
               {
-                  /* Never inject a driver FD into an ordinary or failed exec. */
-                  if (!retval || *retval < 0 || !filename_ptr || !*filename_ptr ||
-                      IS_ERR(*filename_ptr) || !(*filename_ptr)->name ||
-                      strcmp((*filename_ptr)->name, KSUD_PATH))
-                      return 0;
-                  (void)ksu_install_su_fd();
+                  if (*retval >= 0)
+                      (void)ksu_install_su_fd();
                   return 0;
               }
               #endif
@@ -5140,7 +5135,7 @@ jobs:
                                       void *envp, int *flags)
               {
                   if (ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags))
-                      return 1;
+                      return 0;
 
                   return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp, flags);
               }
