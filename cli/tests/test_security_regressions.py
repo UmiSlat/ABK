@@ -1388,10 +1388,21 @@ print(json.dumps({"started": started, "finished": finished}))
             )
             for _ in range(2)
         ]
+        results = []
+        try:
+            for process in processes:
+                stdout, stderr = process.communicate(timeout=10)
+                results.append((process.returncode, stdout, stderr))
+        finally:
+            # Reap every child before assertions/temporary-directory cleanup,
+            # including when a peer fails or times out while holding the lock.
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate(timeout=10)
         intervals = []
-        for process in processes:
-            stdout, stderr = process.communicate(timeout=10)
-            self.assertEqual(0, process.returncode, stderr)
+        for returncode, stdout, stderr in results:
+            self.assertEqual(0, returncode, stderr)
             intervals.append(json.loads(stdout))
 
         intervals.sort(key=lambda item: item["started"])
@@ -1399,6 +1410,44 @@ print(json.dumps({"started": started, "finished": finished}))
             intervals[1]["started"],
             intervals[0]["finished"] - 0.01,
         )
+
+    def test_windows_config_lock_retries_contention_without_writing_locked_bytes(self):
+        real_fdopen = os.fdopen
+        streams = []
+        calls = []
+        windows_lock = mock.Mock(LK_NBLCK=1, LK_UNLCK=0)
+
+        def guarded_fdopen(*args, **kwargs):
+            stream = mock.Mock(wraps=real_fdopen(*args, **kwargs))
+            # Model another process owning byte zero when the old code tries
+            # to initialize the file before entering its lock retry loop.
+            stream.write.side_effect = PermissionError(errno.EACCES, "byte zero is locked")
+            streams.append(stream)
+            return stream
+
+        def locking(fd, mode, count):
+            self.assertEqual(0, os.lseek(fd, 0, os.SEEK_CUR))
+            self.assertEqual(1, count)
+            calls.append(mode)
+            if len(calls) == 1:
+                raise PermissionError(errno.EACCES, "another process owns the lock")
+
+        windows_lock.locking.side_effect = locking
+        with (
+            mock.patch.object(abk.os, "name", "nt"),
+            mock.patch.object(abk.os, "fdopen", side_effect=guarded_fdopen),
+            mock.patch.dict(sys.modules, {"msvcrt": windows_lock}),
+            mock.patch.object(abk.time, "sleep") as sleep,
+        ):
+            with abk._config_process_lock(timeout=5):
+                self.assertEqual([1, 1], calls)
+                with abk._config_process_lock(timeout=5):
+                    self.assertEqual([1, 1], calls)
+        self.assertEqual([1, 1, 0], calls)
+        sleep.assert_called_once_with(0.1)
+        self.assertEqual(1, len(streams))
+        streams[0].write.assert_not_called()
+        streams[0].close.assert_called_once()
 
     @unittest.skipIf(os.name == "nt", "POSIX flock-specific regression")
     def test_config_lock_does_not_retry_permanent_platform_errors(self):
