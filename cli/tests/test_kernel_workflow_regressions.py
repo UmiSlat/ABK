@@ -225,8 +225,8 @@ class KernelWorkflowRegressionTests(unittest.TestCase):
         self.assertIn("ensure_defconfig_value CONFIG_NTSYNC y", block)
 
     @unittest.skipUnless(
-        os.name != "nt" and all(shutil.which(tool) for tool in ("bash", "diff", "grep", "sed", "strings")),
-        "kernel build command requires POSIX tools",
+        sys.platform.startswith("linux") and all(shutil.which(tool) for tool in ("bash", "diff", "grep", "sed", "strings")),
+        "Linux kernel build command requires GNU/Linux tools",
     )
     def test_bazel_disk_cache_uses_runner_environment_and_survives_retries(self):
         step = re.search(
