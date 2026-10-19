@@ -122,7 +122,7 @@ class ManagerDownloadTests(unittest.TestCase):
 
     def test_legacy_and_other_variants_keep_their_artifact_names(self):
         for repo, name in ((SUKISU, "manager"), ("tiann/KernelSU", "manager"),
-                           ("ReSukiSU/ReSukiSU", "Manager-release")):
+                           ("Baka-SU/BakaSU", "Manager-release")):
             with self.subTest(repo=repo):
                 result, requests, files = self.run_download(
                     [{"id": 5, "name": name, "expired": False}], repo=repo,
@@ -160,6 +160,15 @@ class ManagerDownloadTests(unittest.TestCase):
             f"https://nightly.link/{SUKISU}/actions/runs/{RUN_ID}/Manager.zip",
             f"https://nightly.link/{SUKISU}/actions/runs/{RUN_ID}/manager.zip",
         ])
+
+    def test_bakasu_metadata_outage_keeps_manager_release_name(self):
+        repo = "Baka-SU/BakaSU"
+        result, requests, files = self.run_download(
+            [], repo=repo, metadata_error=True, nightly_names=["Manager-release.zip"],
+        )
+        self.assert_downloaded(result, files)
+        self.assertEqual(requests[-1]["url"],
+                         f"https://nightly.link/{repo}/actions/runs/{RUN_ID}/Manager-release.zip")
 
     def test_missing_or_expired_normal_artifact_does_not_select_spoofed_apk(self):
         for artifacts in ([], [{"id": 5, "name": "Manager", "expired": True},

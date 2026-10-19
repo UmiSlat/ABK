@@ -14,7 +14,7 @@ source "${SCRIPT_DIR}/resolve-ksu-ref.sh"
 # Known names are also used if public artifact metadata is temporarily unavailable.
 manager_artifact_names() {
   case "$REPO" in
-    ReSukiSU/ReSukiSU) printf '%s\n' "Manager-release" ;;
+    Baka-SU/BakaSU) printf '%s\n' "Manager-release" ;;
     SukiSU-Ultra/SukiSU-Ultra) printf '%s\n' "Manager" "manager" ;;
     tiann/KernelSU) printf '%s\n' "manager" ;;
     *)
