@@ -13,10 +13,8 @@
 # ================================================================
 
 # 是否启用自定义提交 (true/false)
-# 2026-09-30: KSU Stable/Dev 已钉到上游最新 commit (见 .github/scripts/resolve-ksu-ref.sh)，
-# SUSFS 需与之同代才能干净应用 10_enable_susfs_for_ksu.patch，故改用各分支最新 SUSFS
-# (custom=false)。下方 6-22 提交保留为可快速回退的 6 月绿色基线：回退时把 custom 改回 true。
-custom=false
+# piano Android15/6.6: pin the SUSFS revision used by successful build #34.
+custom=true
 
 # ==================== SUSFS 各分支的 commit hash ====================
 # 仅当 custom=true 时生效
@@ -25,7 +23,7 @@ custom=false
 gki-android12-5.10=4003ecf2d01c
 gki-android13-5.15=65ea8683c794
 gki-android14-6.1=52eaf3b8fa50
-gki-android15-6.6=a8c720c42ca4
+gki-android15-6.6=ebf876ee4ec4761989b30bc9d545d8e2b85c2270
 gki-android16-6.12=72bdce7ce2de
 
 # ==================== 官方版 KernelSU 的版本 ====================
