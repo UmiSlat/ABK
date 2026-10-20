@@ -1,0 +1,460 @@
+--- a/fs/f2fs/Kconfig
++++ b/fs/f2fs/Kconfig
+@@ -151,3 +151,13 @@
+ 	help
+ 	  Use unfair rw_semaphore, if system configured IO priority by block
+ 	  cgroup.
++
++config F2FS_VIP_FILE
++	bool "Volatile VIP file read priority"
++	depends on F2FS_FS && ARM64
++	default n
++	help
++	  Register a bounded set of regular-file inode numbers with the Xiaomi
++	  stock VIP ioctl and promote their buffered read BIOs to RT I/O priority.
++	  Registrations are in memory only and disappear on unmount. The sysfs
++	  vip_file_enable switch is initially disabled.
+--- a/fs/f2fs/Makefile
++++ b/fs/f2fs/Makefile
+@@ -10,3 +10,5 @@
+ f2fs-$(CONFIG_FS_VERITY) += verity.o
+ f2fs-$(CONFIG_F2FS_FS_COMPRESSION) += compress.o
+ f2fs-$(CONFIG_F2FS_IOSTAT) += iostat.o
++
++f2fs-$(CONFIG_F2FS_VIP_FILE) += vip.o
+--- a/fs/f2fs/data.c
++++ b/fs/f2fs/data.c
+@@ -7,6 +7,7 @@
+  */
+ #include <linux/fs.h>
+ #include <linux/f2fs_fs.h>
++#include <linux/ioprio.h>
+ #include <linux/sched/mm.h>
+ #include <linux/mpage.h>
+ #include <linux/writeback.h>
+@@ -1088,6 +1089,9 @@
+ 		bio->bi_private = ctx;
+ 	}
+ 	iostat_alloc_and_bind_ctx(sbi, bio, ctx);
++
++	if (f2fs_is_vip_file(inode))
++		bio->bi_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_RT, 0);
+ 
+ 	return bio;
+ }
+--- a/fs/f2fs/f2fs.h
++++ b/fs/f2fs/f2fs.h
+@@ -832,6 +832,7 @@
+ 	FI_ATOMIC_REPLACE,	/* indicate atomic replace */
+ 	FI_OPENED_FILE,		/* indicate file has been opened */
+ 	FI_DONATE_FINISHED,	/* indicate page donation of file has been finished */
++	FI_VIP_FILE = 38,	/* volatile read-priority registration */
+ 	FI_MAX,			/* max flag, never be used */
+ };
+ 
+@@ -957,6 +958,30 @@
+ 	MAX_NAT_STATE,
+ };
+ 
++#ifdef CONFIG_F2FS_VIP_FILE
++/* Stock arm64 layout, recovered from the supplied kernel BTF. */
++struct vip_inode_sorted {
++	nid_t ino;
++	unsigned int unsorted_idx;
++};
++
++struct vip_inode_unsorted {
++	nid_t ino;
++};
++
++struct f2fs_vip_manager {
++	struct vip_inode_sorted *sorted;
++	struct vip_inode_unsorted *unsorted;
++	unsigned int count;
++	unsigned int capacity;
++	unsigned int unsorted_buf_size;
++	unsigned int unsorted_head;
++	unsigned int unsorted_tail;
++	spinlock_t lock;
++	unsigned int enabled;
++};
++#endif
++
+ struct f2fs_nm_info {
+ 	block_t nat_blkaddr;		/* base disk address of NAT */
+ 	nid_t max_nid;			/* maximum possible node ids */
+@@ -997,6 +1022,9 @@
+ 	char *nat_bitmap_mir;		/* NAT bitmap mirror */
+ #endif
+ 	int bitmap_size;		/* bitmap size */
++#ifdef CONFIG_F2FS_VIP_FILE
++	struct f2fs_vip_manager vip;
++#endif
+ };
+ 
+ /*
+@@ -3809,6 +3837,25 @@
+ int f2fs_restore_node_summary(struct f2fs_sb_info *sbi,
+ 			unsigned int segno, struct f2fs_summary_block *sum);
+ int f2fs_flush_nat_entries(struct f2fs_sb_info *sbi, struct cp_control *cpc);
++#ifdef CONFIG_F2FS_VIP_FILE
++void f2fs_vip_init(struct f2fs_sb_info *sbi);
++void f2fs_vip_destroy(struct f2fs_sb_info *sbi);
++void f2fs_vip_restore(struct inode *inode);
++void f2fs_vip_unlink(struct inode *inode);
++bool f2fs_is_vip_file(struct inode *inode);
++long f2fs_ioc_set_vip_file(struct file *file, unsigned long arg);
++#else
++static inline void f2fs_vip_init(struct f2fs_sb_info *sbi) { }
++static inline void f2fs_vip_destroy(struct f2fs_sb_info *sbi) { }
++static inline void f2fs_vip_restore(struct inode *inode) { }
++static inline void f2fs_vip_unlink(struct inode *inode) { }
++static inline bool f2fs_is_vip_file(struct inode *inode) { return false; }
++static inline long f2fs_ioc_set_vip_file(struct file *file, unsigned long arg)
++{
++	return -EOPNOTSUPP;
++}
++#endif
++
+ int f2fs_build_node_manager(struct f2fs_sb_info *sbi);
+ void f2fs_destroy_node_manager(struct f2fs_sb_info *sbi);
+ int __init f2fs_create_node_manager_caches(void);
+--- a/fs/f2fs/file.c
++++ b/fs/f2fs/file.c
+@@ -4670,6 +4670,8 @@
+ 		return f2fs_ioc_get_dev_alias_file(filp, arg);
+ 	case F2FS_IOC_IO_PRIO:
+ 		return f2fs_ioc_io_prio(filp, arg);
++	case F2FS_IOC_SET_VIP_FILE:
++		return f2fs_ioc_set_vip_file(filp, arg);
+ 	default:
+ 		return -ENOTTY;
+ 	}
+@@ -5393,6 +5395,7 @@
+ 	case F2FS_IOC_COMPRESS_FILE:
+ 	case F2FS_IOC_GET_DEV_ALIAS_FILE:
+ 	case F2FS_IOC_IO_PRIO:
++	case F2FS_IOC_SET_VIP_FILE:
+ 		break;
+ 	default:
+ 		return -ENOIOCTLCMD;
+--- a/fs/f2fs/inode.c
++++ b/fs/f2fs/inode.c
+@@ -634,6 +634,7 @@
+ 	}
+ 	f2fs_set_inode_flags(inode);
+ 
++	f2fs_vip_restore(inode);
+ 	unlock_new_inode(inode);
+ 	trace_f2fs_iget(inode);
+ 	return inode;
+@@ -838,6 +839,10 @@
+ 	int err = 0;
+ 	bool freeze_protected = false;
+ 
++	/* Purge deleted inode numbers before they can be reused. */
++	if (!inode->i_nlink)
++		f2fs_vip_unlink(inode);
++
+ 	f2fs_abort_atomic_write(inode, true);
+ 
+ 	if (fi->cow_inode && f2fs_is_cow_file(fi->cow_inode)) {
+--- a/fs/f2fs/namei.c
++++ b/fs/f2fs/namei.c
+@@ -585,6 +585,7 @@
+ 		goto fail;
+ 	}
+ 	f2fs_delete_entry(de, page, dir, inode);
++	f2fs_vip_unlink(inode);
+ 	f2fs_unlock_op(sbi, &lc);
+ 
+ #if IS_ENABLED(CONFIG_UNICODE)
+--- a/fs/f2fs/node.c
++++ b/fs/f2fs/node.c
+@@ -3326,6 +3326,8 @@
+ 	/* load free nid status from nat_bits table */
+ 	load_free_nid_bitmap(sbi);
+ 
++	f2fs_vip_init(sbi);
++
+ 	return f2fs_build_free_nids(sbi, true, true);
+ }
+ 
+@@ -3401,6 +3403,7 @@
+ 
+ 	kvfree(nm_i->nat_bitmap);
+ 	kvfree(nm_i->nat_bits);
++	f2fs_vip_destroy(sbi);
+ #ifdef CONFIG_F2FS_CHECK_FS
+ 	kvfree(nm_i->nat_bitmap_mir);
+ #endif
+--- a/fs/f2fs/sysfs.c
++++ b/fs/f2fs/sysfs.c
+@@ -1129,6 +1129,9 @@
+ NM_INFO_GENERAL_RW_ATTR(ram_thresh);
+ NM_INFO_GENERAL_RW_ATTR(ra_nid_pages);
+ NM_INFO_GENERAL_RW_ATTR(dirty_nats_ratio);
++#ifdef CONFIG_F2FS_VIP_FILE
++NM_INFO_RW_ATTR(vip_file_enable, vip.enabled);
++#endif
+ 
+ /* F2FS_SBI ATTR */
+ F2FS_RW_ATTR(F2FS_SBI, f2fs_super_block, extension_list, extension_list);
+@@ -1307,6 +1310,9 @@
+ 	ATTR_LIST(ram_thresh),
+ 	ATTR_LIST(ra_nid_pages),
+ 	ATTR_LIST(dirty_nats_ratio),
++#ifdef CONFIG_F2FS_VIP_FILE
++	ATTR_LIST(vip_file_enable),
++#endif
+ 	ATTR_LIST(max_roll_forward_node_blocks),
+ 	ATTR_LIST(cp_interval),
+ 	ATTR_LIST(idle_interval),
+--- /dev/null
++++ b/fs/f2fs/vip.c
+@@ -0,0 +1,234 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Functional reconstruction from supplied stock BTF and arm64 instructions.
++ * This is a review candidate, not the unpublished Xiaomi source.
++ */
++#include <linux/fs.h>
++#include <linux/f2fs_fs.h>
++#include <linux/capability.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++
++#include "f2fs.h"
++
++#define VIP_CAPACITY 1000U
++#define VIP_QUEUE_SIZE (VIP_CAPACITY * 2)
++#define VIP_EMPTY ((nid_t)~0U)
++
++static struct f2fs_vip_manager *vip_manager(struct f2fs_sb_info *sbi)
++{
++	struct f2fs_nm_info *nm = NM_I(sbi);
++
++	return nm ? &nm->vip : NULL;
++}
++
++static bool vip_ready(struct f2fs_vip_manager *vip)
++{
++	return vip && vip->sorted && vip->unsorted;
++}
++
++/* Caller holds vip->lock. Return either the match or insertion position. */
++static unsigned int vip_search(struct f2fs_vip_manager *vip, nid_t ino,
++			      bool *found)
++{
++	unsigned int low = 0, high = vip->count;
++
++	while (low < high) {
++		unsigned int mid = low + (high - low) / 2;
++
++		if (vip->sorted[mid].ino < ino)
++			low = mid + 1;
++		else
++			high = mid;
++	}
++	*found = low < vip->count && vip->sorted[low].ino == ino;
++	return low;
++}
++
++/* No inode pointers are retained, so reclaiming an inode cannot dangle one. */
++static int vip_remove_locked(struct f2fs_vip_manager *vip, nid_t ino)
++{
++	unsigned int pos, slot;
++	bool found;
++
++	pos = vip_search(vip, ino, &found);
++	if (!found)
++		return -ENOENT;
++	slot = vip->sorted[pos].unsorted_idx;
++	if (slot >= vip->unsorted_tail || vip->unsorted[slot].ino != ino)
++		return -EFAULT;
++	vip->unsorted[slot].ino = VIP_EMPTY;
++	memmove(&vip->sorted[pos], &vip->sorted[pos + 1],
++		(vip->count - pos - 1) * sizeof(*vip->sorted));
++	vip->count--;
++	while (vip->unsorted_head < vip->unsorted_tail &&
++	       vip->unsorted[vip->unsorted_head].ino == VIP_EMPTY)
++		vip->unsorted_head++;
++	return 0;
++}
++
++static int vip_compact_locked(struct f2fs_vip_manager *vip)
++{
++	unsigned int read, write = 0, pos;
++	bool found;
++
++	for (read = vip->unsorted_head; read < vip->unsorted_tail; read++) {
++		nid_t ino = vip->unsorted[read].ino;
++
++		if (ino == VIP_EMPTY)
++			continue;
++		pos = vip_search(vip, ino, &found);
++		if (!found)
++			return -EFAULT;
++		vip->unsorted[write].ino = ino;
++		vip->sorted[pos].unsorted_idx = write++;
++	}
++	vip->unsorted_head = 0;
++	vip->unsorted_tail = write;
++	return write == vip->count ? 0 : -EFAULT;
++}
++
++static int vip_insert_locked(struct f2fs_vip_manager *vip, nid_t ino)
++{
++	unsigned int pos;
++	bool found;
++	int ret;
++
++	vip_search(vip, ino, &found);
++	if (found)
++		return -EEXIST;
++	if (vip->count == vip->capacity) {
++		if (vip->unsorted_head >= vip->unsorted_tail)
++			return -EFAULT;
++		ret = vip_remove_locked(vip,
++			vip->unsorted[vip->unsorted_head].ino);
++		if (ret)
++			return ret;
++	}
++	if (vip->unsorted_tail == vip->unsorted_buf_size) {
++		ret = vip_compact_locked(vip);
++		if (ret)
++			return ret;
++	}
++	pos = vip_search(vip, ino, &found);
++	memmove(&vip->sorted[pos + 1], &vip->sorted[pos],
++		(vip->count - pos) * sizeof(*vip->sorted));
++	vip->sorted[pos].ino = ino;
++	vip->sorted[pos].unsorted_idx = vip->unsorted_tail;
++	vip->unsorted[vip->unsorted_tail++].ino = ino;
++	vip->count++;
++	return 0;
++}
++
++void f2fs_vip_init(struct f2fs_sb_info *sbi)
++{
++	struct f2fs_vip_manager *vip = vip_manager(sbi);
++	u64 bytes = (u64)le32_to_cpu(F2FS_RAW_SUPER(sbi)->segment_count) <<
++		(sbi->log_blocksize + sbi->log_blocks_per_seg);
++
++	static_assert(sizeof(*vip) == 48);
++	static_assert(FI_VIP_FILE == 38);
++	if (!vip)
++		return;
++	spin_lock_init(&vip->lock);
++	/* Match the observed stock >30 GiB volume filter, not a path guess. */
++	if (bytes <= (30ULL << 30))
++		return;
++	vip->sorted = kvcalloc(VIP_CAPACITY, sizeof(*vip->sorted), GFP_KERNEL);
++	vip->unsorted = kvmalloc_array(VIP_QUEUE_SIZE,
++				      sizeof(*vip->unsorted), GFP_KERNEL);
++	if (!vip_ready(vip)) {
++		kvfree(vip->sorted);
++		kvfree(vip->unsorted);
++		vip->sorted = NULL;
++		vip->unsorted = NULL;
++		return; /* An optional optimization must not fail the mount. */
++	}
++	memset(vip->unsorted, 0xff, VIP_QUEUE_SIZE * sizeof(*vip->unsorted));
++	vip->capacity = VIP_CAPACITY;
++	vip->unsorted_buf_size = VIP_QUEUE_SIZE;
++	/* kzalloc leaves count/head/tail/enabled at zero. */
++}
++
++void f2fs_vip_destroy(struct f2fs_sb_info *sbi)
++{
++	struct f2fs_vip_manager *vip = vip_manager(sbi);
++
++	/* Called in node-manager teardown after filesystem users are quiesced. */
++	if (!vip)
++		return;
++	kvfree(vip->sorted);
++	kvfree(vip->unsorted);
++	memset(vip, 0, sizeof(*vip));
++}
++
++void f2fs_vip_restore(struct inode *inode)
++{
++	struct f2fs_vip_manager *vip = vip_manager(F2FS_I_SB(inode));
++	bool found;
++
++	if (!S_ISREG(inode->i_mode) || !vip_ready(vip) || !READ_ONCE(vip->enabled))
++		return;
++	spin_lock(&vip->lock);
++	vip_search(vip, inode->i_ino, &found);
++	if (found)
++		set_inode_flag(inode, FI_VIP_FILE);
++	spin_unlock(&vip->lock);
++}
++
++void f2fs_vip_unlink(struct inode *inode)
++{
++	struct f2fs_vip_manager *vip = vip_manager(F2FS_I_SB(inode));
++
++	if (!vip_ready(vip))
++		return;
++	/* Remove even while disabled, including rename-overwrite final eviction. */
++	spin_lock(&vip->lock);
++	vip_remove_locked(vip, inode->i_ino);
++	clear_inode_flag(inode, FI_VIP_FILE);
++	spin_unlock(&vip->lock);
++}
++
++bool f2fs_is_vip_file(struct inode *inode)
++{
++	struct f2fs_vip_manager *vip = vip_manager(F2FS_I_SB(inode));
++	bool found;
++
++	if (!vip_ready(vip) || !READ_ONCE(vip->enabled) ||
++	    !is_inode_flag_set(inode, FI_VIP_FILE))
++		return false;
++	/* A live inode can outlast FIFO removal; the table remains authoritative. */
++	spin_lock(&vip->lock);
++	vip_search(vip, inode->i_ino, &found);
++	spin_unlock(&vip->lock);
++	return found;
++}
++
++long f2fs_ioc_set_vip_file(struct file *file, unsigned long arg)
++{
++	struct inode *inode = file_inode(file);
++	struct f2fs_vip_manager *vip = vip_manager(F2FS_I_SB(inode));
++	unsigned int value;
++	int ret;
++
++	if (get_user(value, (unsigned int __user *)arg))
++		return -EFAULT;
++	if (!S_ISREG(inode->i_mode))
++		return -EINVAL;
++	/* Global RT registry mutations require explicit scheduling privilege. */
++	if (!capable(CAP_SYS_NICE))
++		return -EPERM;
++	if (!vip_ready(vip) || !READ_ONCE(vip->enabled))
++		return -EOPNOTSUPP;
++	spin_lock(&vip->lock);
++	ret = value ? vip_insert_locked(vip, inode->i_ino) :
++		vip_remove_locked(vip, inode->i_ino);
++	if (!ret) {
++		if (value)
++			set_inode_flag(inode, FI_VIP_FILE);
++		else
++			clear_inode_flag(inode, FI_VIP_FILE);
++	}
++	spin_unlock(&vip->lock);
++	return ret;
++}
+--- a/include/uapi/linux/f2fs.h
++++ b/include/uapi/linux/f2fs.h
+@@ -45,6 +45,8 @@
+ #define F2FS_IOC_START_ATOMIC_REPLACE	_IO(F2FS_IOCTL_MAGIC, 25)
+ #define F2FS_IOC_GET_DEV_ALIAS_FILE	_IOR(F2FS_IOCTL_MAGIC, 26, __u32)
+ #define F2FS_IOC_IO_PRIO		_IOW(F2FS_IOCTL_MAGIC, 27, __u32)
++/* Xiaomi stock ABI: argument 0 unregisters, nonzero registers. */
++#define F2FS_IOC_SET_VIP_FILE		_IOW(F2FS_IOCTL_MAGIC, 200, __u32)
+ 
+ /*
+  * should be same as XFS_IOC_GOINGDOWN.

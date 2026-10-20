@@ -4186,6 +4186,20 @@ jobs:
             echo "没有配置 $CUSTOM_EXTERNAL_MODULE_STAGE 阶段的自定义外部模块。"
           fi
 
+      - name: 应用 piano 存储候选补丁
+        if: >-
+          inputs.source_mode == 'aosp' &&
+          inputs.android_version == 'android15' &&
+          inputs.kernel_version == '6.6' &&
+          inputs.sub_level == '118' &&
+          (contains(inputs.custom_kernel_options, 'CONFIG_F2FS_VIP_FILE=y') ||
+          contains(inputs.custom_kernel_options, 'CONFIG_SCSI_BATCH_UNMAP=y'))
+        working-directory: ${{ env.KERNEL_ROOT }}
+        env:
+          CUSTOM_KERNEL_OPTIONS: ${{ inputs.custom_kernel_options }}
+        run: |
+          bash "$GITHUB_WORKSPACE/.github/scripts/apply-piano-storage-candidates.sh" "$KERNEL_ROOT/common"
+
       - name: 应用自定义内核选项
         if: inputs.custom_kernel_options != ''
         working-directory: ${{ env.KERNEL_ROOT }}

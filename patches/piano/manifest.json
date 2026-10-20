@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "status": "review_candidates",
+  "candidates": [
+    {
+      "id": "f2fs-vip-functional-candidate",
+      "config": "CONFIG_F2FS_VIP_FILE=y",
+      "patch": "0001-f2fs-vip-functional-candidate.patch",
+      "sha256": "95fd6d16a730950dede24498d15d798f46fe99f56c225fd0f3c8a03b9ac8433e",
+      "expected_common_head": "339c7c85511e9c6df8d67e7e06ff111a246a40b8",
+      "sources": [
+        {
+          "kind": "stock_binary_analysis",
+          "kernel": "6.6.118-android15-8-gf72a02f47f4b-abogki551678766-4k",
+          "image_sha256": "7c9ecc459dde9a87c1fd9d8c0227cee1957ac8cde7f9d6cbe9aba4a3cbf6f91d",
+          "scope": "Observed Xiaomi VIP ioctl ABI and inode flag; independently implemented candidate."
+        }
+      ],
+      "behavior": "Bounded volatile inode registration; selected buffered-read BIOs receive RT I/O priority when vip_file_enable is enabled.",
+      "limits": [
+        "The sysfs switch starts disabled; registrations disappear on unmount.",
+        "Both registration and removal require CAP_SYS_NICE. This differs from the original permission policy; callers without this capability receive EPERM.",
+        "This is not the unpublished Xiaomi implementation and does not restore Hybrid UFS or prove a performance gain."
+      ]
+    },
+    {
+      "id": "bounded-generic-batch-unmap",
+      "config": "CONFIG_SCSI_BATCH_UNMAP=y",
+      "patch": "0001-scsi-sd-bounded-generic-batch-unmap.patch",
+      "sha256": "794a3f324966e7bbb00587758c81400ca0e73756857a1bfc255fc37477c72e65",
+      "expected_common_head": "339c7c85511e9c6df8d67e7e06ff111a246a40b8",
+      "sources": [
+        {
+          "kind": "official_open_source",
+          "url": "https://github.com/OnePlusOSS/android_kernel_oneplus_mt6789/blob/dc7f73a479ea7cf27cde36b9a5777beba54db292/drivers/scsi/sd.c",
+          "license": "GPL-2.0",
+          "scope": "SCSI_BATCH_UNMAP per-bio descriptor encoding and VPD capability negotiation."
+        },
+        {
+          "kind": "stock_binary_analysis",
+          "kernel": "6.6.118-android15-8-gf72a02f47f4b-abogki551678766-4k",
+          "scope": "Corroborates the per-bio UNMAP algorithm; Xiaomi OEM policy is excluded."
+        }
+      ],
+      "behavior": "Encode separate discard BIO ranges in one UNMAP command, bounded by device VPD, CDB length and the one-page buffer; preserve the single-descriptor path.",
+      "limits": [
+        "At 4K page size the payload holds at most 255 descriptors.",
+        "This is generic batch UNMAP, not complete Xiaomi FastDiscard: OEM enablement, object lifecycle, controls and statistics are excluded.",
+        "Hardware activation and performance remain unverified."
+      ],
+      "device_observation": {
+        "device": "Xiaomi piano",
+        "observed_at": "2026-10-21",
+        "vpd_max_unmap_descriptors": {
+          "sda": 1,
+          "sdb": 1,
+          "sdc": 1
+        },
+        "effect": "This generic candidate retains one descriptor on the observed tablet; it does not activate Xiaomi FastDiscard."
+      }
+    }
+  ]
+}

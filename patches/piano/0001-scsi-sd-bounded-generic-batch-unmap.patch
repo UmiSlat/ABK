@@ -1,0 +1,203 @@
+Subject: [PATCH] scsi: sd: add bounded generic batch UNMAP support
+
+Adapt the descriptor loop and VPD limit negotiation from the GPL-2.0
+SCSI_BATCH_UNMAP implementation published by OnePlusOSS in
+android_kernel_oneplus_mt6789 at dc7f73a479ea7cf27cde36b9a5777beba54db292.
+The original piano f72a Image independently contains the same
+per-bio encoding algorithm, with an additional Xiaomi UFS OEM policy.
+
+This patch implements only the generic data path. It never interprets
+vendor-owned OEM pointers and does not claim to restore Xiaomi policy.
+Cap descriptors by the one-page pool allocation and 16-bit CDB length;
+keep the original single-range command path and reject inconsistent
+multi-range requests before writing the payload. Also prevent request
+merging from exceeding the negotiated total descriptor count.
+
+Base: ACK 339c7c85511e9c6df8d67e7e06ff111a246a40b8
+Enable with CONFIG_SCSI_BATCH_UNMAP=y; the default remains disabled.
+
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -821,11 +821,37 @@
+ 	return protect;
+ }
+ 
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++/* sd_set_special_bvec() allocates one page, and UNMAP has a 16-bit length. */
++#define SD_BATCH_UNMAP_MAX_DESCS \
++	min_t(unsigned int, (PAGE_SIZE - 8) / 16, (0xffffU - 8) / 16)
++
++static unsigned int sd_batch_unmap_max_segments(struct scsi_disk *sdkp)
++{
++	struct scsi_vpd *vpd;
++	unsigned int segments = 1;
++
++	rcu_read_lock();
++	vpd = rcu_dereference(sdkp->device->vpd_pgb0);
++	if (vpd && vpd->len >= 28 &&
++	    get_unaligned_be32(&vpd->data[20]))
++		segments = clamp_t(unsigned int,
++			get_unaligned_be32(&vpd->data[24]), 1,
++			SD_BATCH_UNMAP_MAX_DESCS);
++	rcu_read_unlock();
++
++	return segments;
++}
++#endif
++
+ static void sd_config_discard(struct scsi_disk *sdkp, unsigned int mode)
+ {
+ 	struct request_queue *q = sdkp->disk->queue;
+ 	unsigned int logical_block_size = sdkp->device->sector_size;
+ 	unsigned int max_blocks = 0;
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++	unsigned int max_segments = 1;
++#endif
+ 
+ 	q->limits.discard_alignment =
+ 		sdkp->unmap_alignment * logical_block_size;
+@@ -839,11 +865,17 @@
+ 	case SD_LBP_FULL:
+ 	case SD_LBP_DISABLE:
+ 		blk_queue_max_discard_sectors(q, 0);
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++		blk_queue_max_discard_segments(q, 1);
++#endif
+ 		return;
+ 
+ 	case SD_LBP_UNMAP:
+ 		max_blocks = min_not_zero(sdkp->max_unmap_blocks,
+ 					  (u32)SD_MAX_WS16_BLOCKS);
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++		max_segments = sd_batch_unmap_max_segments(sdkp);
++#endif
+ 		break;
+ 
+ 	case SD_LBP_WS16:
+@@ -871,6 +903,9 @@
+ 	}
+ 
+ 	blk_queue_max_discard_sectors(q, max_blocks * (logical_block_size >> 9));
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++	blk_queue_max_discard_segments(q, max_segments);
++#endif
+ }
+ 
+ static void *sd_set_special_bvec(struct request *rq, unsigned int data_len)
+@@ -886,6 +921,64 @@
+ 	return bvec_virt(&rq->special_vec);
+ }
+ 
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++/*
++ * Encode every discard bio separately. Falling back to the request's first
++ * LBA plus its aggregate length would discard live blocks between ranges.
++ */
++static blk_status_t sd_setup_batch_unmap_cmnd(struct scsi_cmnd *cmd)
++{
++	struct scsi_device *sdp = cmd->device;
++	struct request *rq = scsi_cmd_to_rq(cmd);
++	struct scsi_disk *sdkp = scsi_disk(rq->q->disk);
++	unsigned int data_len;
++	unsigned int descriptor_offset = 8, count = 0;
++	unsigned int max_segments = min_t(unsigned int,
++		SD_BATCH_UNMAP_MAX_DESCS, queue_max_discard_segments(rq->q));
++	unsigned int logical_mask = (sdp->sector_size >> 9) - 1;
++	struct bio *bio;
++	char *buf;
++
++	/* Check the bio chain before allocating or writing the one-page payload. */
++	__rq_for_each_bio(bio, rq) {
++		if (++count > max_segments || bio_op(bio) != REQ_OP_DISCARD ||
++		    !bio_sectors(bio) ||
++		    (bio->bi_iter.bi_sector & logical_mask) ||
++		    (bio_sectors(bio) & logical_mask))
++			return BLK_STS_IOERR;
++	}
++	if (!count)
++		return BLK_STS_IOERR;
++	data_len = 8 + 16 * count;
++
++	buf = sd_set_special_bvec(rq, data_len);
++	if (!buf)
++		return BLK_STS_RESOURCE;
++
++	cmd->cmd_len = 10;
++	cmd->cmnd[0] = UNMAP;
++	put_unaligned_be16(data_len, &cmd->cmnd[7]);
++	put_unaligned_be16(data_len - 2, &buf[0]);
++	put_unaligned_be16(data_len - 8, &buf[2]);
++
++	__rq_for_each_bio(bio, rq) {
++		u64 lba = sectors_to_logical(sdp, bio->bi_iter.bi_sector);
++		u32 nr_blocks = sectors_to_logical(sdp, bio_sectors(bio));
++
++		put_unaligned_be64(lba, &buf[descriptor_offset]);
++		put_unaligned_be32(nr_blocks, &buf[descriptor_offset + 8]);
++		descriptor_offset += 16;
++	}
++
++	cmd->allowed = sdkp->max_retries;
++	cmd->transfersize = data_len;
++	rq->timeout = SD_TIMEOUT;
++
++	trace_android_vh_sd_setup_unmap_multi_segment(cmd, buf);
++	return scsi_alloc_sgtables(cmd);
++}
++#endif
++
+ static blk_status_t sd_setup_unmap_cmnd(struct scsi_cmnd *cmd)
+ {
+ 	struct scsi_device *sdp = cmd->device;
+@@ -895,6 +988,12 @@
+ 	u32 nr_blocks = sectors_to_logical(sdp, blk_rq_sectors(rq));
+ 	unsigned int data_len = 24;
+ 	char *buf;
++
++#ifdef CONFIG_SCSI_BATCH_UNMAP
++	if (queue_max_discard_segments(rq->q) > 1 ||
++	    blk_rq_nr_discard_segments(rq) > 1)
++		return sd_setup_batch_unmap_cmnd(cmd);
++#endif
+ 
+ 	buf = sd_set_special_bvec(rq, data_len);
+ 	if (!buf)
+--- a/drivers/scsi/Kconfig
++++ b/drivers/scsi/Kconfig
+@@ -91,6 +91,21 @@
+ 	  (the one containing the directory /) is located on a SCSI disk.
+ 	  In this case, do not compile the driver for your SCSI host adapter
+ 	  (below) as a module either.
++
++config SCSI_BATCH_UNMAP
++	bool "Batch SCSI UNMAP descriptors"
++	depends on BLK_DEV_SD
++	help
++	  Allow the SCSI disk driver to encode multiple discard ranges in one
++	  UNMAP command when the device advertises this in its Block Limits
++	  VPD page. The number of descriptors is limited by the device, the
++	  command format and the single-page parameter buffer. Devices that
++	  advertise one descriptor retain the single-range path.
++
++	  This is generic batch UNMAP support, not the Xiaomi FastDiscard
++	  controller policy or its vendor statistics interfaces.
++
++	  If unsure, say N.
+ 
+ config CHR_DEV_ST
+ 	tristate "SCSI tape support"
+--- a/block/blk-merge.c
++++ b/block/blk-merge.c
+@@ -687,9 +687,10 @@
+ {
+ 	unsigned short segments = blk_rq_nr_discard_segments(req);
+ 
+-	if (segments >= queue_max_discard_segments(q))
++	if (segments + blk_rq_nr_discard_segments(next) >
++	    queue_max_discard_segments(q))
+ 		goto no_merge;
+-	if (blk_rq_sectors(req) + bio_sectors(next->bio) >
++	if (blk_rq_sectors(req) + blk_rq_sectors(next) >
+ 	    blk_rq_get_max_sectors(req, blk_rq_pos(req)))
+ 		goto no_merge;
+ 
